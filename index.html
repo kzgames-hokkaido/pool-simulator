@@ -21,7 +21,8 @@
   body.touch .touch { display:block; }
   #stick { position:fixed; left:24px; bottom:28px; width:130px; height:130px; border-radius:50%; background:rgba(255,255,255,0.25); border:1px solid rgba(255,255,255,0.6); z-index:6; touch-action:none; }
   #knob { position:absolute; left:40px; top:40px; width:50px; height:50px; border-radius:50%; background:rgba(255,255,255,0.75); }
-  #btnJump, #btnDive, #btnRun { position:fixed; right:30px; width:64px; height:64px; border-radius:50%; background:rgba(255,255,255,0.4); border:1px solid rgba(255,255,255,0.7); z-index:6; color:#2b4a56; font-size:12px; display:flex; align-items:center; justify-content:center; touch-action:none; user-select:none; }
+  #btnJump, #btnDive, #btnRun { position:fixed; right:24px; width:68px; height:68px; border-radius:50%; background:rgba(255,255,255,0.4); border:1px solid rgba(255,255,255,0.7); z-index:6; color:#2b4a56; font-size:12px; display:none; align-items:center; justify-content:center; touch-action:none; user-select:none; }
+  body.touch #btnJump, body.touch #btnDive, body.touch #btnRun { display:flex; }
   #btnJump { bottom:60px; }
   #btnDive { bottom:140px; }
   #btnRun { bottom:220px; right:110px; }
@@ -71,6 +72,7 @@ const BAKED = window.__BAKED;
 const M = BAKED.manifest;
 const CELL = M.cell, WATER = M.water, N = M.n, ENC_K = M.encK;
 const TILE = 1.2;
+const isPhone = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches && !matchMedia('(hover: hover)').matches;
 let quality = isPhone ? 1 : 2;   // スマホは最初から「中」
 let exposure = 1.2;   // 焼き込んだ光の明るさ(画面での)
 let userExp = 1.0;    // [ ] で変える倍率
@@ -79,7 +81,6 @@ const cellKey = {};   // 部屋ごとの明るさの目安
 // ---------- 描画の準備 ----------
 const canvas = document.getElementById('c');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-const isPhone = navigator.maxTouchPoints > 0 && matchMedia('(pointer: coarse)').matches && !matchMedia('(hover: hover)').matches;
 const DPR = Math.min(devicePixelRatio, isPhone ? 1.0 : 1.5);   // スマホは軽く
 renderer.setPixelRatio(DPR);
 renderer.setSize(innerWidth, innerHeight);
@@ -629,7 +630,7 @@ document.addEventListener('mousemove', e => {
   P.pitch = Math.max(-1.5, Math.min(1.5, P.pitch));
 });
 
-const isTouch = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;   // タッチできる端末なら、スティックとボタンを出す
+const isTouch = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches || location.search.includes('touch');   // タッチできる端末なら、スティックとボタンを出す(?touch で強制)
 if (isTouch) document.body.classList.add('touch');
 (function setupTouch() {
   if (!isTouch) return;
@@ -861,6 +862,7 @@ function toggleHud() {
   hudOn = !hudOn;
   hudEl.style.display = hudOn ? '' : 'none';
   for (const el of document.querySelectorAll('.touch')) el.style.display = (hudOn && isTouch) ? '' : 'none';
+  document.body.classList.toggle('touch', hudOn && isTouch);
   showMsg(hudOn ? '操作表示 ON' : '操作表示 OFF（H でもどる）');
 }
 let started = false;
