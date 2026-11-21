@@ -930,6 +930,126 @@ addEventListener('resize', () => {
 // ---------- メインループ ----------
 let last = performance.now(), bob = 0, sway = 0;
 const clock = { t: 0 };
+// ---------- 監視カメラ風の表示と、白黒の写真モード(全作品共通の部品) ----------
+// K: 写真モード(白黒・昔のカメラ風) / Enter・クリック: 撮る / V: 監視カメラ風の表示を消す・出す
+const CAM = (() => {
+  const TITLE = 'プールの夢';
+  const label = () => { try { return `CAM ${String((Math.floor(P.pos.z / CELL + 0.5) + N) * (2 * N + 1) + Math.floor(P.pos.x / CELL + 0.5) + N + 1).padStart(2, '0')}  POOL ${String.fromCharCode(65 + Math.max(0, Math.min(2 * N, Math.floor(P.pos.x / CELL + 0.5) + N)))}${Math.max(0, Math.min(2 * N, Math.floor(P.pos.z / CELL + 0.5) + N)) + 1}`; } catch (e) { return 'CAM 01'; } };
+  const st = document.createElement('style');
+  st.textContent = `
+    #cctv, #finder { position:fixed; inset:0; pointer-events:none; z-index:4; font-family:"Courier New",Consolas,monospace; color:rgba(255,255,255,0.9); text-shadow:0 0 4px rgba(0,0,0,0.95), 1px 1px 0 rgba(0,0,0,0.7); font-size:17px; letter-spacing:0.08em; display:none; }
+    #cctv div, #finder div { position:absolute; }
+    #cctv .rec { left:34px; top:26px; } #cctv .rec i { display:inline-block; width:12px; height:12px; border-radius:50%; background:#e02020; margin-right:8px; box-shadow:0 0 8px #f00; animation:recblink 1.2s steps(1) infinite; }
+    @keyframes recblink { 0%,55%{opacity:1} 56%,100%{opacity:0} }
+    #cctv .cam { right:34px; top:26px; text-align:right; } #cctv .stamp { right:34px; bottom:26px; text-align:right; } #cctv .el { left:34px; top:52px; font-size:14px; opacity:0.85; }
+    .camcorner { width:26px; height:26px; border:2px solid rgba(255,255,255,0.75); filter:drop-shadow(0 0 2px rgba(0,0,0,0.8)); }
+    .camcorner.tl { left:14px; top:14px; border-right:none; border-bottom:none; } .camcorner.tr { right:14px; top:14px; border-left:none; border-bottom:none; }
+    .camcorner.bl { left:14px; bottom:14px; border-right:none; border-top:none; } .camcorner.br { right:14px; bottom:14px; border-left:none; border-top:none; }
+    #finder .lab { left:34px; top:26px; } #finder .hint { left:50%; bottom:26px; transform:translateX(-50%); font-size:13px; white-space:nowrap; font-family:"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif; }
+    #finder .cross { left:50%; top:50%; width:22px; height:22px; margin:-11px 0 0 -11px; background:linear-gradient(#fff,#fff) center/2px 100% no-repeat, linear-gradient(#fff,#fff) center/100% 2px no-repeat; opacity:0.55; }
+    #btnCamX, #btnShotX { position:fixed; border-radius:50%; z-index:6; display:none; align-items:center; justify-content:center; touch-action:none; user-select:none; font:12px "Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif; color:#fff; text-shadow:0 0 4px #000; }
+    #btnCamX { right:16px; top:64px; width:56px; height:56px; background:rgba(0,0,0,0.28); border:1px solid rgba(255,255,255,0.6); }
+    #btnShotX { left:50%; bottom:22px; margin-left:-38px; width:76px; height:76px; background:rgba(255,255,255,0.3); border:3px solid #fff; }
+    body.touch #btnCamX { display:flex; } body.touch.photo #btnShotX { display:flex; }
+    @media (max-width: 700px) { #cctv, #finder { font-size:12px; } #cctv .el { font-size:11px; top:44px; } } body.hasBack #cctv .rec, body.hasBack #finder .lab { top:60px; } body.hasBack #cctv .el { top:86px; } body.hasBack .camcorner.tl, body.hasBack .corner.tl { top:48px; } @media (max-width: 700px) { body.hasBack #cctv .el { top:80px; } }`;
+  document.head.appendChild(st);
+  if (document.getElementById('backToMenu')) document.body.classList.add('hasBack');
+  const mk = (id, html) => { const d = document.createElement('div'); d.id = id; d.innerHTML = html; document.body.appendChild(d); return d; };
+  const corners = '<div class="camcorner tl"></div><div class="camcorner tr"></div><div class="camcorner bl"></div><div class="camcorner br"></div>';
+  const cctvEl = mk('cctv', corners + '<div class="rec"><i></i>REC</div><div class="el">00:00:00</div><div class="cam"></div><div class="stamp"></div>');
+  const finderEl = mk('finder', corners + '<div class="lab">PHOTO  B/W</div><div class="cross"></div><div class="hint"></div>');
+  const btnCam = mk('btnCamX', 'カメラ'), btnShot = mk('btnShotX', '撮る');
+  const elCam = cctvEl.querySelector('.cam'), elStamp = cctvEl.querySelector('.stamp'), elEl = cctvEl.querySelector('.el');
+  finderEl.querySelector('.hint').textContent = isTouch ? '「撮る」で保存 ・「もどる」で終わる' : 'Enter / クリックで撮る ・ K でもどる';
+  const ks = document.querySelector('#start .keys');
+  if (ks) ks.insertAdjacentHTML('beforeend', '<div><b>K</b>カメラ（白黒の写真モード）</div><div><b>Enter / クリック</b>写真モードで撮る（画像が保存される）</div><div><b>V</b>監視カメラ風の表示を消す／出す</div>');
+
+  const pass = new ShaderPass({
+    uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uCctv: { value: 1 }, uGlitch: { value: 0 }, uSeed: { value: 0 }, uMono: { value: 0 }, uFlash: { value: 0 }, uRes: { value: new THREE.Vector2(1280, 720) } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; uniform float uCctv; uniform float uGlitch; uniform float uSeed; uniform float uMono; uniform float uFlash; uniform vec2 uRes; varying vec2 vUv;
+      float h1(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+      void main(){
+        vec2 c0 = vUv - 0.5;
+        // 監視カメラの広角レンズ: ふちが少し丸くゆがむ
+        vec2 uv = 0.5 + c0 * (1.0 + uCctv * 0.11 * dot(c0, c0)) * (1.0 - uCctv * 0.05);
+        // ごくまれな映像の乱れ: 横の帯がずれる・全体が少し上下にとぶ
+        float band = floor(uv.y * 26.0 + uSeed * 7.0), bh = h1(vec2(band, floor(uSeed * 37.0)));
+        uv.x += (bh - 0.5) * 0.16 * uGlitch * step(0.5, bh);
+        uv.y += (h1(vec2(floor(uSeed * 29.0), 3.0)) - 0.5) * 0.03 * uGlitch;
+        // 写真モード: 昔のカメラのように、細部がつぶれたあらい絵にする(たて 250 ますぶん)
+        vec2 grid = vec2(uRes.x / uRes.y, 1.0) * 250.0;
+        uv = mix(uv, (floor(uv * grid) + 0.5) / grid, step(0.5, uMono));
+        vec2 d = uv - 0.5; float r2 = dot(d, d), ca = (0.006 * uCctv + 0.03 * uGlitch);
+        vec3 col; col.r = texture2D(tDiffuse, uv + d * r2 * ca + vec2(0.006 * uGlitch, 0.0)).r; col.g = texture2D(tDiffuse, uv).g; col.b = texture2D(tDiffuse, uv - d * r2 * ca - vec2(0.006 * uGlitch, 0.0)).b;
+        if (uMono > 0.5) { vec2 o = 0.7 / grid; vec3 b = texture2D(tDiffuse, uv + o).rgb + texture2D(tDiffuse, uv + vec2(-o.x, o.y)).rgb + texture2D(tDiffuse, uv + vec2(o.x, -o.y)).rgb + texture2D(tDiffuse, uv - o).rgb; col = mix(col, b * 0.25, 0.55); }
+        col *= 1.0 - smoothstep(0.3, 1.25, length(d) * 1.3) * 0.2 * uCctv;
+        float lum = dot(col, vec3(0.299, 0.587, 0.114));
+        // 監視カメラらしい色: 少しあせて、黒がわずかに浮く。走査線
+        col = mix(col, vec3(lum), 0.16 * uCctv); col = col * (1.0 - 0.03 * uCctv) + 0.012 * uCctv;
+        col *= 1.0 - uCctv * 0.085 * (0.5 + 0.5 * sin(gl_FragCoord.y * 3.14159));
+        // 白黒の写真: 強いコントラスト、周辺の暗さ、あらい粒、ほこり、たての細いきず
+        float bw = smoothstep(0.02, 0.95, pow(clamp(lum, 0.0, 1.0), 0.85));
+        bw *= 1.0 - smoothstep(0.25, 0.95, length(c0) * 1.25) * 0.45;
+        float gr = h1(floor(gl_FragCoord.xy / 2.0) + floor(uTime * 12.0) * 7.31);
+        bw += (gr - 0.5) * 0.24 * (0.4 + 0.6 * (1.0 - abs(bw * 2.0 - 1.0)));
+        float speck = step(0.9988, h1(floor(vUv * vec2(120.0, 90.0)) + floor(uTime * 0.7) * 3.1)); bw = mix(bw, 0.07, speck * 0.8);
+        float sx = h1(vec2(floor(uTime * 0.5), 9.0)); bw += 0.13 * (1.0 - smoothstep(0.0, 0.0016, abs(vUv.x - sx))) * step(0.55, h1(vec2(floor(uTime * 0.5), 4.0)));
+        col = mix(col, vec3(bw), uMono);
+        // ざらつき。乱れのときは砂あらしの帯
+        float g = h1(vUv * vec2(1234.5, 987.6) + fract(uTime) * 13.7);
+        col += (g - 0.5) * 0.03 * uCctv;
+        float snow = h1(floor(vUv * vec2(320.0, 240.0)) + fract(uTime * 7.0) * 91.0);
+        col = mix(col, vec3(snow), uGlitch * (0.18 + 0.6 * step(0.82, bh)));
+        col += uFlash;
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
+  composer.addPass(pass);
+  const U = pass.uniforms, p2 = (n) => String(n).padStart(2, '0');
+  let cctvOn = true, photoMode = false, wantShot = false, flash = 0, glitchT = 0, glitchDur = 0.3, nextGlitch = 30 + Math.random() * 40, recT = 0, lastStamp = '', tAll = 0;
+  function toggleCctv() { cctvOn = !cctvOn; showMsg(cctvOn ? '監視カメラ風 ON' : '監視カメラ風 OFF（V でもどる）'); }
+  function togglePhoto() { if (!started) return; photoMode = !photoMode; document.body.classList.toggle('photo', photoMode); btnCam.textContent = photoMode ? 'もどる' : 'カメラ'; showMsg(photoMode ? '写真モード（白黒）' : '写真モードを終わった'); }
+  function shoot() { if (started && photoMode) wantShot = true; }
+  function savePhoto() {
+    const c2 = document.createElement('canvas'); c2.width = canvas.width; c2.height = canvas.height; c2.getContext('2d').drawImage(canvas, 0, 0);
+    const d = new Date(), name = `${TITLE}_${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.png`;
+    c2.toBlob(b => { if (!b) { showMsg('保存できませんでした'); return; } const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 8000); showMsg('写真を保存した'); window.__lastPhoto = { name, size: b.size }; }, 'image/png');
+  }
+  addEventListener('keydown', e => {
+    if (e.code === 'KeyK') togglePhoto();
+    if (e.code === 'KeyV') toggleCctv();
+    if (e.code === 'Enter' && photoMode) { shoot(); e.preventDefault(); }
+  });
+  canvas.addEventListener('mousedown', e => { if (started && photoMode && e.button === 0 && document.pointerLockElement === canvas) shoot(); });
+  btnCam.addEventListener('touchstart', e => { togglePhoto(); e.preventDefault(); }, { passive: false });
+  btnShot.addEventListener('touchstart', e => { shoot(); e.preventDefault(); }, { passive: false });
+  return {
+    pass, toggleCctv, togglePhoto, shoot, label,
+    glitch: (d = 0.4) => { glitchDur = d; glitchT = d; }, state: () => ({ cctvOn, photoMode, nextGlitch }),
+    // 毎コマ、描く前に呼ぶ
+    update(dt) {
+      const cc = cctvOn && !photoMode; tAll += dt;
+      U.uTime.value = tAll; U.uRes.value.set(canvas.width, canvas.height);
+      U.uCctv.value += ((cc ? 1 : 0) - U.uCctv.value) * Math.min(1, dt * 6); U.uMono.value += ((photoMode ? 1 : 0) - U.uMono.value) * Math.min(1, dt * 8);
+      // 映像の乱れは、ごくまれに(30〜70秒に1回、0.15〜0.5秒)
+      if (started && cc) { nextGlitch -= dt; if (nextGlitch <= 0) { nextGlitch = 30 + Math.random() * 40; glitchDur = 0.15 + Math.random() * 0.35; glitchT = glitchDur; } }
+      if (glitchT > 0) { glitchT -= dt; U.uGlitch.value = cc ? Math.min(1, Math.sin(Math.max(0, glitchT) / glitchDur * Math.PI) * 1.4) : 0; U.uSeed.value = Math.random(); } else U.uGlitch.value = 0;
+      flash = Math.max(0, flash - dt * 4.5); U.uFlash.value = flash * flash * 0.9;
+      cctvEl.style.display = (started && cc) ? 'block' : 'none'; finderEl.style.display = (started && photoMode) ? 'block' : 'none';
+      if (started) recT += dt;
+      if (started && cc) {
+        const d = new Date(), s = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}  ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+        if (s !== lastStamp) { lastStamp = s; elStamp.textContent = s; elCam.textContent = label(); const t = Math.floor(recT); elEl.textContent = `${p2(Math.floor(t / 3600))}:${p2(Math.floor(t / 60) % 60)}:${p2(t % 60)}`; }
+      }
+      if (wantShot) { U.uFlash.value = 0; U.uGlitch.value = 0; U.uMono.value = 1; }
+    },
+    // 毎コマ、描いた後に呼ぶ
+    after() { if (wantShot) { wantShot = false; savePhoto(); flash = 1; if (typeof noiseBurst === 'function') { noiseBurst(3200, 2, 0.03, 0.02); setTimeout(() => noiseBurst(1800, 2, 0.022, 0.03), 70); } } },
+  };
+})();
+window.__cam = CAM;
+
 function frame(now) {
   requestAnimationFrame(frame);
   let dt = Math.min(0.05, (now - last) / 1000); last = now;
@@ -984,7 +1104,9 @@ function frame(now) {
   if (quality >= 1 && started) stepRipples(dt);
   renderReflectionRefraction(uw);
   uRes.value.set(renderer.domElement.width, renderer.domElement.height);
+  CAM.update(dt);
   composer.render();
+  CAM.after();
 }
 applyQuality();
 requestAnimationFrame(frame);
